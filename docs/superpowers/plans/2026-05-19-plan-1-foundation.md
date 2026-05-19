@@ -2083,7 +2083,9 @@ if __name__ == "__main__":
 
 Run (PowerShell):
 ```powershell
-$env:APP_ENV="dev"; $env:DATABASE_URL="postgresql+asyncpg://crm:crm@localhost:5432/crm"; $env:TELEGRAM_BOT_TOKEN="x"; $env:TELEGRAM_OPERATOR_IDS=""; $env:AI_PROVIDER="fake"; $env:WORKER_POLL_INTERVAL_SECONDS="0.5"
+$env:APP_ENV="dev"; $env:DATABASE_URL="postgresql+asyncpg://crm:crm@localhost:5432/crm"; $env:TELEGRAM_BOT_TOKEN="x"; $env:TELEGRAM_OPERATOR_IDS="1"; $env:AI_PROVIDER="fake"; $env:WORKER_POLL_INTERVAL_SECONDS="0.5"
+# Note: PowerShell `$env:VAR=""` unsets the variable on Windows; pass "1" (or any non-empty value)
+# to satisfy the required field rather than relying on an empty string.
 $proc = Start-Process -PassThru -FilePath "uv" -ArgumentList "run","python","-m","crm.entrypoints.worker" -NoNewWindow -RedirectStandardOutput "worker.log"
 Start-Sleep -Seconds 2
 Stop-Process -Id $proc.Id
