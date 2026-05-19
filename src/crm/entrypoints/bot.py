@@ -36,6 +36,7 @@ EDIT_PREFIX = "edit_lead:"
 PROPOSE_PREFIX = "propose_lead:"
 PUBLISH_PROPOSAL_PREFIX = "publish_proposal:"
 MARK_SENT_PREFIX = "mark_sent:"
+FOLLOW_UP_OUTCOME_PREFIX = "follow_up_outcome:"
 
 
 def _is_operator(container: Container, user_id: int | None) -> bool:
@@ -308,6 +309,66 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
             "bot.mark_sent.done",
             proposal_id=proposal_id,
             follow_up_id=result.follow_up.id,
+        )
+
+    @router.callback_query(F.data.startswith(FOLLOW_UP_OUTCOME_PREFIX))
+    async def on_follow_up_outcome(cb: CallbackQuery) -> None:
+        user_id = cb.from_user.id if cb.from_user else None
+        if not _is_operator(container, user_id):
+            await cb.answer("Нет доступа.")
+            return
+
+        raw = (cb.data or "").removeprefix(FOLLOW_UP_OUTCOME_PREFIX)
+        try:
+            id_part, outcome_part = raw.split(":", 1)
+            follow_up_id = int(id_part)
+        except (ValueError, IndexError):
+            await cb.answer("Битый callback.")
+            return
+
+        from crm.use_cases.record_follow_up_result import (
+            FollowUpNotFoundError,
+            FollowUpNotSentError,
+            FollowUpOutcome,
+            record_follow_up_result,
+        )
+
+        try:
+            outcome = FollowUpOutcome(outcome_part)
+        except ValueError:
+            await cb.answer(f"Неизвестный outcome: {outcome_part}.")
+            return
+
+        try:
+            await record_follow_up_result(
+                container,
+                follow_up_id=follow_up_id,
+                outcome=outcome,
+                notes="(via inline button)",
+                operator_user_id=None,
+            )
+        except FollowUpNotFoundError:
+            await cb.answer(f"FollowUp {follow_up_id} не найден.")
+            return
+        except FollowUpNotSentError as exc:
+            await cb.answer(str(exc), show_alert=True)
+            return
+
+        outcome_label = {
+            FollowUpOutcome.accepted: "✅ Клиент принял",
+            FollowUpOutcome.declined: "❌ Клиент отказался",
+            FollowUpOutcome.waiting: "💬 Ждём ещё",
+        }[outcome]
+        if cb.message is not None:
+            await container.telegram_sender.send_message(
+                chat_id=cb.message.chat.id,
+                text=f"{outcome_label} — записано (FollowUp #{follow_up_id}).",
+            )
+        await cb.answer()
+        log.info(
+            "bot.follow_up_outcome.done",
+            follow_up_id=follow_up_id,
+            outcome=outcome.value,
         )
 
     dp.include_router(router)
