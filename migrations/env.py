@@ -16,6 +16,18 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from crm.config import Settings
 from crm.db.base import Base
+from crm.db.models import (  # noqa: F401  imports register tables on Base.metadata
+    Client,
+    Contract,
+    Document,
+    Event,
+    FollowUp,
+    Lead,
+    Project,
+    Proposal,
+    ScheduledJob,
+    User,
+)
 
 config = context.config
 
