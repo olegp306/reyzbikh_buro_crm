@@ -263,3 +263,189 @@ async def test_follow_up_repository_list_due(
     assert due[0].message_template == "due now"
 
     await container.aclose()
+
+
+@pytest.mark.integration
+async def test_document_polymorphic_owner_round_trip(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from crm.db.models.document import Document
+    from crm.db.models.enums import DocumentKind, DocumentOwnerType
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        await uow.documents.add(
+            Document(
+                owner_type=DocumentOwnerType.proposal,
+                owner_id=42,
+                kind=DocumentKind.gdoc,
+                title="Proposal Doc",
+                gdoc_id="abc123",
+            )
+        )
+        await uow.documents.add(
+            Document(
+                owner_type=DocumentOwnerType.proposal,
+                owner_id=43,
+                kind=DocumentKind.gdoc,
+                title="Other Proposal Doc",
+                gdoc_id="def456",
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        docs_42 = await uow.documents.list_for(DocumentOwnerType.proposal, 42)
+        docs_43 = await uow.documents.list_for(DocumentOwnerType.proposal, 43)
+
+    assert len(docs_42) == 1
+    assert docs_42[0].title == "Proposal Doc"
+    assert len(docs_43) == 1
+    assert docs_43[0].gdoc_id == "def456"
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_event_append_only_log(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from crm.db.models.event import Event
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        await uow.events.add(
+            Event(
+                event_type="lead.created",
+                aggregate_type="lead",
+                aggregate_id=1,
+                payload={"channel": "telegram"},
+            )
+        )
+        await uow.events.add(
+            Event(
+                event_type="lead.qualified",
+                aggregate_type="lead",
+                aggregate_id=1,
+                payload={"by": "operator"},
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        events = await uow.events.list_for_aggregate("lead", 1)
+
+    assert [e.event_type for e in events] == ["lead.created", "lead.qualified"]
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_scheduled_job_list_pending_due_skips_future(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from crm.db.models.scheduled_job import ScheduledJob
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    now = datetime.now(UTC)
+
+    async with container.uow() as uow:
+        await uow.scheduled_jobs.add(
+            ScheduledJob(
+                job_type="due_now",
+                payload={},
+                run_at=now - timedelta(minutes=1),
+            )
+        )
+        await uow.scheduled_jobs.add(
+            ScheduledJob(
+                job_type="future",
+                payload={},
+                run_at=now + timedelta(hours=1),
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        due = await uow.scheduled_jobs.list_pending_due(now)
+
+    assert len(due) == 1
+    assert due[0].job_type == "due_now"
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_scheduled_job_idempotency_key_unique_partial(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import IntegrityError
+
+    from crm.db.models.scheduled_job import ScheduledJob
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    now = datetime.now(UTC)
+
+    async with container.uow() as uow:
+        await uow.scheduled_jobs.add(
+            ScheduledJob(
+                job_type="send_follow_up",
+                payload={"follow_up_id": 1},
+                run_at=now,
+                idempotency_key="follow_up:1",
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        await uow.scheduled_jobs.add(
+            ScheduledJob(
+                job_type="other",
+                payload={},
+                run_at=now,
+                idempotency_key=None,
+            )
+        )
+        await uow.scheduled_jobs.add(
+            ScheduledJob(
+                job_type="other",
+                payload={},
+                run_at=now,
+                idempotency_key=None,
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        duplicate = ScheduledJob(
+            job_type="send_follow_up",
+            payload={"follow_up_id": 1},
+            run_at=now,
+            idempotency_key="follow_up:1",
+        )
+        uow.session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            await uow.session.flush()
+        await uow.rollback()
+
+    await container.aclose()

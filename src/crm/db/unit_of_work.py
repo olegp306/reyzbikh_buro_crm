@@ -14,10 +14,14 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from crm.db.repositories.clients import ClientRepository
+from crm.db.repositories.contracts import ContractRepository
+from crm.db.repositories.documents import DocumentRepository
+from crm.db.repositories.events import EventRepository
 from crm.db.repositories.follow_ups import FollowUpRepository
 from crm.db.repositories.leads import LeadRepository
 from crm.db.repositories.projects import ProjectRepository
 from crm.db.repositories.proposals import ProposalRepository
+from crm.db.repositories.scheduled_jobs import ScheduledJobRepository
 from crm.db.repositories.users import UserRepository
 
 
@@ -26,10 +30,14 @@ class SqlAlchemyUnitOfWork:
 
     session: AsyncSession
     clients: ClientRepository
+    contracts: ContractRepository
+    documents: DocumentRepository
+    events: EventRepository
     follow_ups: FollowUpRepository
     leads: LeadRepository
     projects: ProjectRepository
     proposals: ProposalRepository
+    scheduled_jobs: ScheduledJobRepository
     users: UserRepository
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -38,10 +46,14 @@ class SqlAlchemyUnitOfWork:
     async def __aenter__(self) -> Self:
         self.session = self._session_factory()
         self.clients = ClientRepository(self.session)
+        self.contracts = ContractRepository(self.session)
+        self.documents = DocumentRepository(self.session)
+        self.events = EventRepository(self.session)
         self.follow_ups = FollowUpRepository(self.session)
         self.leads = LeadRepository(self.session)
         self.projects = ProjectRepository(self.session)
         self.proposals = ProposalRepository(self.session)
+        self.scheduled_jobs = ScheduledJobRepository(self.session)
         self.users = UserRepository(self.session)
         return self
 
