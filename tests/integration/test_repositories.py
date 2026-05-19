@@ -7,6 +7,7 @@ testcontainer Postgres, then exercises one repository at a time inside a UoW.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 from alembic import command
@@ -126,5 +127,139 @@ async def test_lead_repository_list_by_status(
 
     assert len(new_leads) == 2
     assert len(qualified_leads) == 1
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_follow_up_check_constraint_rejects_zero_subjects(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.exc import IntegrityError
+
+    from crm.db.models.enums import ChannelKind, FollowUpKind
+    from crm.db.models.follow_up import FollowUp
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        bad = FollowUp(
+            kind=FollowUpKind.reminder,
+            scheduled_for=datetime.now(UTC) + timedelta(days=1),
+            channel=ChannelKind.telegram,
+            message_template="test",
+        )
+        uow.session.add(bad)
+        with pytest.raises(IntegrityError):
+            await uow.session.flush()
+        await uow.rollback()
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_follow_up_check_constraint_rejects_two_subjects(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta
+
+    from sqlalchemy.exc import IntegrityError
+
+    from crm.db.models.client import Client
+    from crm.db.models.enums import (
+        ChannelKind,
+        ClientSource,
+        FollowUpKind,
+        LeadStatus,
+    )
+    from crm.db.models.follow_up import FollowUp
+    from crm.db.models.lead import Lead
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        client = await uow.clients.add(Client(full_name="X", source=ClientSource.other))
+        lead = await uow.leads.add(
+            Lead(channel=ChannelKind.telegram, raw_text="r", status=LeadStatus.new)
+        )
+        await uow.commit()
+        client_id, lead_id = client.id, lead.id
+
+    async with container.uow() as uow:
+        bad = FollowUp(
+            lead_id=lead_id,
+            client_id=client_id,
+            kind=FollowUpKind.reminder,
+            scheduled_for=datetime.now(UTC) + timedelta(days=1),
+            channel=ChannelKind.telegram,
+            message_template="test",
+        )
+        uow.session.add(bad)
+        with pytest.raises(IntegrityError):
+            await uow.session.flush()
+        await uow.rollback()
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_follow_up_repository_list_due(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta
+
+    from crm.db.models.enums import ChannelKind, FollowUpKind, FollowUpStatus, LeadStatus
+    from crm.db.models.follow_up import FollowUp
+    from crm.db.models.lead import Lead
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        lead = await uow.leads.add(
+            Lead(channel=ChannelKind.telegram, raw_text="r", status=LeadStatus.new)
+        )
+        await uow.commit()
+        lead_id = lead.id
+
+    now = datetime.now(UTC)
+    async with container.uow() as uow:
+        await uow.follow_ups.add(
+            FollowUp(
+                lead_id=lead_id,
+                kind=FollowUpKind.reminder,
+                scheduled_for=now - timedelta(hours=1),
+                channel=ChannelKind.telegram,
+                message_template="due now",
+                status=FollowUpStatus.pending,
+            )
+        )
+        await uow.follow_ups.add(
+            FollowUp(
+                lead_id=lead_id,
+                kind=FollowUpKind.reminder,
+                scheduled_for=now + timedelta(days=1),
+                channel=ChannelKind.telegram,
+                message_template="future",
+                status=FollowUpStatus.pending,
+            )
+        )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        due = await uow.follow_ups.list_due(now)
+
+    assert len(due) == 1
+    assert due[0].message_template == "due now"
 
     await container.aclose()
