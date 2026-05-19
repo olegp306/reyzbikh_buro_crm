@@ -87,7 +87,12 @@ async def send_follow_up(
 
     # Send the reminder OUTSIDE the DB transaction.
     ids = container.settings.telegram_operator_ids
-    if ids:
+    if not ids:
+        log.warning(
+            "send_follow_up.no_operator_configured",
+            follow_up_id=follow_up_id,
+        )
+    else:
         chat_id = ids[0]
         try:
             await container.telegram_sender.send_message(

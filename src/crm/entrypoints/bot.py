@@ -332,7 +332,7 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
         try:
             id_part, outcome_part = raw.split(":", 1)
             follow_up_id = int(id_part)
-        except (ValueError, IndexError):
+        except ValueError:
             await cb.answer("Битый callback.")
             return
 

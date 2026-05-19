@@ -176,6 +176,11 @@ async def _send_operator_link(container: Container, proposal_id: int, url: str) 
 
     ids = container.settings.telegram_operator_ids
     if not ids:
+        log.warning(
+            "handle_publish_proposal_to_gdoc.no_operator_configured",
+            proposal_id=proposal_id,
+            url=url,
+        )
         return
     chat_id = ids[0]
     # Inline keyboard with the mark-sent button so the operator can advance
