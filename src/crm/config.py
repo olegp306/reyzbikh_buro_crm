@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AppEnv(str, Enum):
@@ -21,7 +21,6 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
-        enable_decoding=False,
     )
 
     app_env: AppEnv = Field(...)
@@ -30,7 +29,7 @@ class Settings(BaseSettings):
     database_url: str = Field(...)
 
     telegram_bot_token: str = Field(...)
-    telegram_operator_ids: tuple[int, ...] = Field(...)
+    telegram_operator_ids: Annotated[tuple[int, ...], NoDecode] = Field(...)
 
     ai_provider: Literal["openai", "anthropic", "fake"] = Field(default="fake")
     openai_api_key: str | None = Field(default=None)
