@@ -35,6 +35,7 @@ CONFIRM_PREFIX = "confirm_lead:"
 EDIT_PREFIX = "edit_lead:"
 PROPOSE_PREFIX = "propose_lead:"
 PUBLISH_PROPOSAL_PREFIX = "publish_proposal:"
+MARK_SENT_PREFIX = "mark_sent:"
 
 
 def _is_operator(container: Container, user_id: int | None) -> bool:
@@ -263,6 +264,50 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
             "bot.publish_proposal.enqueued",
             proposal_id=proposal_id,
             job_id=job.id,
+        )
+
+    @router.callback_query(F.data.startswith(MARK_SENT_PREFIX))
+    async def on_mark_sent(cb: CallbackQuery) -> None:
+        user_id = cb.from_user.id if cb.from_user else None
+        if not _is_operator(container, user_id):
+            await cb.answer("Нет доступа.")
+            return
+        try:
+            proposal_id = int((cb.data or "").removeprefix(MARK_SENT_PREFIX))
+        except ValueError:
+            await cb.answer("Битый callback.")
+            return
+
+        from crm.use_cases.mark_proposal_sent import (
+            ProposalNotFoundError,
+            ProposalNotInDraftError,
+            mark_proposal_sent,
+        )
+
+        try:
+            result = await mark_proposal_sent(
+                container, proposal_id=proposal_id, operator_user_id=None
+            )
+        except ProposalNotFoundError:
+            await cb.answer(f"Proposal {proposal_id} не найден.")
+            return
+        except ProposalNotInDraftError as exc:
+            await cb.answer(str(exc), show_alert=True)
+            return
+
+        if cb.message is not None:
+            await container.telegram_sender.send_message(
+                chat_id=cb.message.chat.id,
+                text=(
+                    f"✅ Proposal #{result.proposal.id} → sent. "
+                    f"Напоминание через 3 дня (FollowUp #{result.follow_up.id})."
+                ),
+            )
+        await cb.answer()
+        log.info(
+            "bot.mark_sent.done",
+            proposal_id=proposal_id,
+            follow_up_id=result.follow_up.id,
         )
 
     dp.include_router(router)
