@@ -44,7 +44,7 @@ def settings(pg_url: str) -> Settings:
         app_env=AppEnv.test,
         log_level="DEBUG",
         database_url=pg_url,
-        telegram_bot_token="test-token",
+        telegram_bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         telegram_operator_ids=(111,),
         ai_provider="fake",
     )
