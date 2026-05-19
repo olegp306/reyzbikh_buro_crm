@@ -9,8 +9,8 @@ CRM/workflow platform for an architecture bureau. Postgres-centered; Telegram is
 
 - [x] Plan 1: Foundation
 - [x] Plan 2: Domain + Schema
-- [ ] Plan 3: Lead Intake (fake AI)
-- [ ] Plan 4: AI Adapters
+- [x] Plan 3: Lead Intake (fake AI)
+- [x] Plan 4: AI Adapters (OpenAI)
 - [ ] Plan 5: Proposal + Scheduler + Worker
 - [ ] Plan 6: Google Docs adapter
 - [ ] Plan 7: Follow-ups
@@ -30,9 +30,16 @@ domain tables (Plan 2):
   users  clients  leads  projects  proposals
   follow_ups  contracts  documents
   events  scheduled_jobs
+
+use cases (Plan 3):
+  intake_lead   qualify_lead
+
+AI adapters (Plan 4):
+  OpenAIExtractor (gpt-5.5-medium)   OpenAIProposalWriter
+  prompts in src/crm/prompts/*.j2
 ```
 
-All three Python processes share the `crm` package. Business logic will live in `src/crm/use_cases/`. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev. Repositories live in `src/crm/db/repositories/`; access via `uow.leads`, `uow.proposals`, etc.
+All three Python processes share the `crm` package. Business logic lives in `src/crm/use_cases/` — one async function per case, with an explicit UoW + adapters argument (no globals). Bot handlers in `src/crm/entrypoints/bot.py` translate Telegram updates into use-case calls; they never touch the DB directly. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev; real OpenAI adapters are selected via `AI_PROVIDER=openai`. Repositories live in `src/crm/db/repositories/`; access via `uow.leads`, `uow.proposals`, etc.
 
 ## Local dev
 
@@ -96,14 +103,16 @@ uv run alembic revision --autogenerate -m "describe change"
 src/crm/
   config.py             # pydantic-settings — all env vars
   logging.py            # structlog setup
-  container.py          # DI container
+  container.py          # DI container (picks Fake* vs OpenAI* by AI_PROVIDER)
   db/
     base.py             # SQLAlchemy declarative Base
     session.py          # async engine + session factory
     unit_of_work.py     # SqlAlchemyUnitOfWork + uow_scope
     models/             # ORM models (one file per entity)
     repositories/       # async repos hung off UoW
-  adapters/             # IO behind Protocols; fakes here today
+  use_cases/            # business logic: intake_lead, qualify_lead, ...
+  adapters/             # IO behind Protocols; fakes + OpenAI impls
+  prompts/              # Jinja .j2 prompts (extract_lead, generate_proposal)
   entrypoints/          # api / bot / worker
 tests/
   unit/                 # no IO
