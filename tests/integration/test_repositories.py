@@ -6,12 +6,9 @@ testcontainer Postgres, then exercises one repository at a time inside a UoW.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from crm.config import Settings
@@ -22,32 +19,12 @@ from crm.db.models.lead import Lead
 from crm.db.models.user import User
 
 
-def _alembic_config(settings: Settings) -> Config:
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", settings.database_url)
-    return cfg
-
-
-async def _migrate(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_ENV", settings.app_env.value)
-    monkeypatch.setenv("DATABASE_URL", settings.database_url)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", settings.telegram_bot_token)
-    monkeypatch.setenv(
-        "TELEGRAM_OPERATOR_IDS",
-        ",".join(str(i) for i in settings.telegram_operator_ids),
-    )
-    monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
-    cfg = _alembic_config(settings)
-    await asyncio.to_thread(command.upgrade, cfg, "head")
-
-
 @pytest.mark.integration
 async def test_user_repository_crud_round_trip(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -71,9 +48,8 @@ async def test_user_repository_crud_round_trip(
 async def test_client_repository_crud_round_trip(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -103,11 +79,10 @@ async def test_client_repository_crud_round_trip(
 async def test_lead_repository_list_by_status(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from crm.db.models.enums import ChannelKind
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -135,7 +110,7 @@ async def test_lead_repository_list_by_status(
 async def test_follow_up_check_constraint_rejects_zero_subjects(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from datetime import datetime, timedelta
 
@@ -144,7 +119,6 @@ async def test_follow_up_check_constraint_rejects_zero_subjects(
     from crm.db.models.enums import ChannelKind, FollowUpKind
     from crm.db.models.follow_up import FollowUp
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -166,7 +140,7 @@ async def test_follow_up_check_constraint_rejects_zero_subjects(
 async def test_follow_up_check_constraint_rejects_two_subjects(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from datetime import datetime, timedelta
 
@@ -182,7 +156,6 @@ async def test_follow_up_check_constraint_rejects_two_subjects(
     from crm.db.models.follow_up import FollowUp
     from crm.db.models.lead import Lead
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -214,7 +187,7 @@ async def test_follow_up_check_constraint_rejects_two_subjects(
 async def test_follow_up_repository_list_due(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from datetime import datetime, timedelta
 
@@ -222,7 +195,6 @@ async def test_follow_up_repository_list_due(
     from crm.db.models.follow_up import FollowUp
     from crm.db.models.lead import Lead
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -269,12 +241,11 @@ async def test_follow_up_repository_list_due(
 async def test_document_polymorphic_owner_round_trip(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from crm.db.models.document import Document
     from crm.db.models.enums import DocumentKind, DocumentOwnerType
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -314,11 +285,10 @@ async def test_document_polymorphic_owner_round_trip(
 async def test_event_append_only_log(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from crm.db.models.event import Event
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -352,13 +322,12 @@ async def test_event_append_only_log(
 async def test_scheduled_job_list_pending_due_skips_future(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from datetime import UTC, datetime, timedelta
 
     from crm.db.models.scheduled_job import ScheduledJob
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     now = datetime.now(UTC)
@@ -393,7 +362,7 @@ async def test_scheduled_job_list_pending_due_skips_future(
 async def test_scheduled_job_idempotency_key_unique_partial(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from datetime import UTC, datetime
 
@@ -401,7 +370,6 @@ async def test_scheduled_job_idempotency_key_unique_partial(
 
     from crm.db.models.scheduled_job import ScheduledJob
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     now = datetime.now(UTC)

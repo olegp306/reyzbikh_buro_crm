@@ -38,6 +38,16 @@ target_metadata = Base.metadata
 
 
 def _get_url() -> str:
+    """Return the URL to migrate against.
+
+    Precedence:
+      1. ``sqlalchemy.url`` set on the running Alembic Config — used by
+         tests so they don't have to mutate process env to migrate.
+      2. ``Settings().database_url`` — used in dev/prod via ``alembic upgrade``.
+    """
+    configured = context.config.get_main_option("sqlalchemy.url")
+    if configured:
+        return configured
     settings = Settings()  # type: ignore[call-arg]
     return settings.database_url
 

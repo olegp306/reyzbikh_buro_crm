@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from crm.config import Settings
@@ -15,32 +11,12 @@ from crm.db.models.enums import ChannelKind, LeadStatus
 from crm.use_cases.intake_lead import intake_lead
 
 
-def _alembic_config(settings: Settings) -> Config:
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", settings.database_url)
-    return cfg
-
-
-async def _migrate(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_ENV", settings.app_env.value)
-    monkeypatch.setenv("DATABASE_URL", settings.database_url)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", settings.telegram_bot_token)
-    monkeypatch.setenv(
-        "TELEGRAM_OPERATOR_IDS",
-        ",".join(str(i) for i in settings.telegram_operator_ids),
-    )
-    monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
-    cfg = _alembic_config(settings)
-    await asyncio.to_thread(command.upgrade, cfg, "head")
-
-
 @pytest.mark.integration
 async def test_intake_lead_happy_path_creates_lead_and_extracts(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     lead = await intake_lead(
@@ -71,7 +47,7 @@ async def test_intake_lead_happy_path_creates_lead_and_extracts(
 async def test_intake_lead_handles_ai_failure(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from crm.adapters.ai.extractor import ExtractedLead
 
@@ -79,7 +55,6 @@ async def test_intake_lead_handles_ai_failure(
         async def extract(self, raw_text: str) -> ExtractedLead:
             raise RuntimeError("upstream AI is down")
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
     container.ai_extractor = BrokenExtractor()  # type: ignore[assignment]
 
@@ -109,12 +84,11 @@ async def test_intake_lead_handles_ai_failure(
 async def test_intake_lead_records_actor_user_id_on_events(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     from crm.db.models.enums import UserRole
     from crm.db.models.user import User
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     async with container.uow() as uow:
@@ -145,12 +119,11 @@ async def test_intake_lead_records_actor_user_id_on_events(
 async def test_intake_lead_works_with_fake_provider_via_container_factory(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
     """Round-trip: Container(settings) where ai_provider=fake builds a usable extractor."""
     from crm.adapters.ai.extractor import FakeAIExtractor
 
-    await _migrate(settings, monkeypatch)
     container = Container(settings)
 
     assert isinstance(container.ai_extractor, FakeAIExtractor)
@@ -163,17 +136,5 @@ async def test_intake_lead_works_with_fake_provider_via_container_factory(
         operator_user_id=None,
     )
     assert lead.status == LeadStatus.qualifying
-
-    from sqlalchemy import delete
-
-    from crm.db.models.event import Event
-    from crm.db.models.lead import Lead as LeadModel
-
-    async with container.uow() as uow:
-        await uow.session.execute(
-            delete(Event).where(Event.aggregate_type == "lead", Event.aggregate_id == lead.id)
-        )
-        await uow.session.execute(delete(LeadModel).where(LeadModel.id == lead.id))
-        await uow.commit()
 
     await container.aclose()

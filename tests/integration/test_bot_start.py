@@ -25,6 +25,7 @@ def _make_message(text: str, user_id: int) -> Update:
 @pytest.mark.integration
 async def test_start_command_replies_to_allowlisted_operator(
     settings: Settings,
+    db_clean: None,
 ) -> None:
     # Operator 111 is in settings.telegram_operator_ids.
     container = Container(settings)
@@ -51,6 +52,7 @@ async def test_start_command_replies_to_allowlisted_operator(
 @pytest.mark.integration
 async def test_start_command_ignores_non_allowlisted_user(
     settings: Settings,
+    db_clean: None,
 ) -> None:
     container = Container(settings)
     bot = Bot(token=container.settings.telegram_bot_token)
