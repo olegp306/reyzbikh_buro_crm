@@ -80,7 +80,8 @@ async def intake_lead(
 
     async with container.uow() as uow:
         lead = await uow.leads.get(lead_id)
-        assert lead is not None  # we just inserted it
+        if lead is None:
+            raise RuntimeError(f"intake_lead: Lead {lead_id} disappeared between TX1 and TX2")
 
         if extracted is not None:
             lead.summary = extracted.summary
@@ -98,7 +99,8 @@ async def intake_lead(
                 actor_user_id=operator_user_id,
             )
         else:
-            assert extraction_error is not None
+            if extraction_error is None:
+                raise RuntimeError("intake_lead: invariant broken — extracted is None but no error")
             lead.extracted_data = {
                 "_extraction_failed": True,
                 "error": str(extraction_error),

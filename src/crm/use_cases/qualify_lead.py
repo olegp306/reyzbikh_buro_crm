@@ -103,10 +103,12 @@ def _maybe_build_client(lead: Lead) -> Client | None:
     phone: str | None = None
     email: str | None = None
     if isinstance(contact, str):
-        if "@" in contact:
-            email = contact
-        else:
-            phone = contact
+        cleaned = contact.strip()
+        if cleaned:
+            if "@" in cleaned:
+                email = cleaned
+            else:
+                phone = cleaned
 
     return Client(
         full_name=full_name.strip(),
