@@ -375,10 +375,10 @@ Create `src/crm/config.py`:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class AppEnv(str, Enum):
@@ -401,7 +401,10 @@ class Settings(BaseSettings):
     database_url: str = Field(...)
 
     telegram_bot_token: str = Field(...)
-    telegram_operator_ids: tuple[int, ...] = Field(...)
+    # NoDecode prevents pydantic-settings >=2.7 from JSON-decoding the env
+    # value before our @field_validator runs; without it,
+    # `TELEGRAM_OPERATOR_IDS=111,222` would fail JSON parsing.
+    telegram_operator_ids: Annotated[tuple[int, ...], NoDecode] = Field(...)
 
     ai_provider: Literal["openai", "anthropic", "fake"] = Field(default="fake")
     openai_api_key: str | None = Field(default=None)
@@ -448,6 +451,7 @@ LOG_LEVEL=INFO
 DATABASE_URL=postgresql+asyncpg://crm:crm@postgres:5432/crm
 
 # === Telegram ===
+# Format: <bot_id>:<35+ char secret>, e.g. 123456:ABC-DEF...
 TELEGRAM_BOT_TOKEN=
 # Comma-separated allowlist of Telegram user IDs. Empty = nobody is allowed.
 TELEGRAM_OPERATOR_IDS=
@@ -784,11 +788,13 @@ def pg_url(pg_container: PostgresContainer) -> str:
 
 @pytest.fixture
 def settings(pg_url: str) -> Settings:
+    # Telegram token must match aiogram's regex `\d+:[A-Za-z0-9_-]{35,}`
+    # because T10's bot tests pass this value into `Bot(token=...)`.
     return Settings(  # type: ignore[call-arg]
         app_env=AppEnv.test,
         log_level="DEBUG",
         database_url=pg_url,
-        telegram_bot_token="test-token",
+        telegram_bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         telegram_operator_ids=(111,),
         ai_provider="fake",
     )
@@ -1022,9 +1028,11 @@ Make sure `upgrade()` and `downgrade()` are empty `pass` bodies (the docstring c
 Create `tests/integration/test_alembic_upgrade.py`:
 
 ```python
+import asyncio
+
 import pytest
-from alembic.config import Config
 from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -1053,7 +1061,12 @@ async def test_alembic_upgrade_head_runs_clean(
     )
     monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
 
-    command.upgrade(_alembic_config(settings), "head")
+    # env.py calls asyncio.run() at module top-level — running it inside
+    # an already-active event loop raises RuntimeError. asyncio.to_thread
+    # executes the blocking Alembic command in a worker thread where no
+    # event loop is active.
+    cfg = _alembic_config(settings)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
 
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT version_num FROM alembic_version"))
@@ -2070,7 +2083,9 @@ if __name__ == "__main__":
 
 Run (PowerShell):
 ```powershell
-$env:APP_ENV="dev"; $env:DATABASE_URL="postgresql+asyncpg://crm:crm@localhost:5432/crm"; $env:TELEGRAM_BOT_TOKEN="x"; $env:TELEGRAM_OPERATOR_IDS=""; $env:AI_PROVIDER="fake"; $env:WORKER_POLL_INTERVAL_SECONDS="0.5"
+$env:APP_ENV="dev"; $env:DATABASE_URL="postgresql+asyncpg://crm:crm@localhost:5432/crm"; $env:TELEGRAM_BOT_TOKEN="x"; $env:TELEGRAM_OPERATOR_IDS="1"; $env:AI_PROVIDER="fake"; $env:WORKER_POLL_INTERVAL_SECONDS="0.5"
+# Note: PowerShell `$env:VAR=""` unsets the variable on Windows; pass "1" (or any non-empty value)
+# to satisfy the required field rather than relying on an empty string.
 $proc = Start-Process -PassThru -FilePath "uv" -ArgumentList "run","python","-m","crm.entrypoints.worker" -NoNewWindow -RedirectStandardOutput "worker.log"
 Start-Sleep -Seconds 2
 Stop-Process -Id $proc.Id
@@ -2336,7 +2351,7 @@ jobs:
     env:
       APP_ENV: test
       DATABASE_URL: postgresql+asyncpg://crm:crm@localhost:5432/crm
-      TELEGRAM_BOT_TOKEN: test-token
+      TELEGRAM_BOT_TOKEN: "123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
       TELEGRAM_OPERATOR_IDS: "111"
       AI_PROVIDER: fake
     steps:
