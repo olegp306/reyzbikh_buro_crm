@@ -33,6 +33,7 @@ log = structlog.get_logger(__name__)
 
 CONFIRM_PREFIX = "confirm_lead:"
 EDIT_PREFIX = "edit_lead:"
+PROPOSE_PREFIX = "propose_lead:"
 
 
 def _is_operator(container: Container, user_id: int | None) -> bool:
@@ -139,16 +140,25 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
             return
 
         if cb.message is not None:
+            text = f"Lead #{lead.id} → qualified." + (
+                f" Создан Client #{lead.client_id}."
+                if lead.client_id
+                else " Client не создан (нет имени в данных)."
+            )
+            propose_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📝 Сгенерировать предложение",
+                            callback_data=f"{PROPOSE_PREFIX}{lead.id}",
+                        ),
+                    ],
+                ],
+            )
             await container.telegram_sender.send_message(
                 chat_id=cb.message.chat.id,
-                text=(
-                    f"Lead #{lead.id} → qualified."
-                    + (
-                        f" Создан Client #{lead.client_id}."
-                        if lead.client_id
-                        else " Client не создан (нет имени в данных)."
-                    )
-                ),
+                text=text,
+                reply_markup=propose_kb,
             )
         await cb.answer()
         log.info("bot.confirm.done", lead_id=lead.id, client_id=lead.client_id)
@@ -161,6 +171,54 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
             return
         await cb.answer("Редактирование пока не реализовано в v1.", show_alert=True)
         log.info("bot.edit.stub", user_id=user_id)
+
+    @router.callback_query(F.data.startswith(PROPOSE_PREFIX))
+    async def on_propose(cb: CallbackQuery) -> None:
+        user_id = cb.from_user.id if cb.from_user else None
+        if not _is_operator(container, user_id):
+            await cb.answer("Нет доступа.")
+            return
+        try:
+            lead_id = int((cb.data or "").removeprefix(PROPOSE_PREFIX))
+        except ValueError:
+            await cb.answer("Битый callback.")
+            return
+
+        from crm.use_cases.generate_proposal import (
+            LeadNotQualifiedError,
+            generate_proposal,
+        )
+
+        try:
+            proposal = await generate_proposal(container, lead_id=lead_id, operator_user_id=None)
+        except LeadNotFoundError:
+            await cb.answer(f"Lead {lead_id} не найден.")
+            return
+        except LeadNotQualifiedError as exc:
+            await cb.answer(str(exc), show_alert=True)
+            return
+
+        body_preview = (proposal.generated_text or "(AI ничего не вернул)")[:500]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📄 В Google Doc",  # noqa: RUF001
+                        callback_data=f"publish_proposal:{proposal.id}",
+                    ),
+                ],
+            ],
+        )
+        if cb.message is not None:
+            await container.telegram_sender.send_message(
+                chat_id=cb.message.chat.id,
+                text=(
+                    f"Proposal #{proposal.id} (draft) для lead #{proposal.lead_id}:\n\n"
+                    f"{body_preview}"
+                ),
+                reply_markup=kb,
+            )
+        await cb.answer()
 
     dp.include_router(router)
 
