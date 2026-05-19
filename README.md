@@ -8,7 +8,7 @@ CRM/workflow platform for an architecture bureau. Postgres-centered; Telegram is
 ## Status
 
 - [x] Plan 1: Foundation
-- [ ] Plan 2: Domain + Schema
+- [x] Plan 2: Domain + Schema
 - [ ] Plan 3: Lead Intake (fake AI)
 - [ ] Plan 4: AI Adapters
 - [ ] Plan 5: Proposal + Scheduler + Worker
@@ -25,9 +25,14 @@ docker compose:
   api        — FastAPI :8000 (so far: /healthz)
   bot        — aiogram long-polling
   worker     — scheduler/jobs loop
+
+domain tables (Plan 2):
+  users  clients  leads  projects  proposals
+  follow_ups  contracts  documents
+  events  scheduled_jobs
 ```
 
-All three Python processes share the `crm` package. Business logic will live in `src/crm/use_cases/`. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev.
+All three Python processes share the `crm` package. Business logic will live in `src/crm/use_cases/`. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev. Repositories live in `src/crm/db/repositories/`; access via `uow.leads`, `uow.proposals`, etc.
 
 ## Local dev
 
@@ -92,7 +97,12 @@ src/crm/
   config.py             # pydantic-settings — all env vars
   logging.py            # structlog setup
   container.py          # DI container
-  db/                   # SQLAlchemy base, session, Unit of Work
+  db/
+    base.py             # SQLAlchemy declarative Base
+    session.py          # async engine + session factory
+    unit_of_work.py     # SqlAlchemyUnitOfWork + uow_scope
+    models/             # ORM models (one file per entity)
+    repositories/       # async repos hung off UoW
   adapters/             # IO behind Protocols; fakes here today
   entrypoints/          # api / bot / worker
 tests/
