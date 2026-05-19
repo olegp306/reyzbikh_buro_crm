@@ -83,5 +83,97 @@ async def publish_proposal_to_gdoc(
 
 
 async def handle_publish_proposal_to_gdoc(container: Container, job: ScheduledJob) -> None:
-    """Worker handler — stub. Real implementation lives in Task 8."""
-    raise NotImplementedError("handle_publish_proposal_to_gdoc — implemented in Plan 5a Task 8")
+    """Worker handler: create a Google Doc for the proposal.
+
+    Steps:
+      1. Read proposal (and check whether a Document already exists for
+         idempotency on retries).
+      2. Outside any transaction, call ``gdocs.create_doc(...)``.
+      3. INSERT Document; record ``proposal.published_to_gdoc`` event.
+      4. Notify the first allowlisted operator with the resulting URL.
+
+    Idempotency: if a Document with ``owner_type='proposal'`` and
+    ``kind='gdoc'`` already exists for this proposal, skip the external
+    call and treat the job as done. This handles the case where the
+    previous worker crashed between gdocs.create_doc() and the
+    Document INSERT (orphan Doc accepted, no duplicates created).
+    """
+    from crm.db.models.document import Document
+    from crm.db.models.enums import DocumentKind, DocumentOwnerType
+
+    proposal_id = int(job.payload["proposal_id"])
+
+    async with container.uow() as uow:
+        proposal = await uow.proposals.get(proposal_id)
+        if proposal is None:
+            raise RuntimeError(f"handle_publish_proposal_to_gdoc: Proposal {proposal_id} not found")
+
+        existing = await uow.documents.list_for(DocumentOwnerType.proposal, proposal_id)
+        already_gdoc = next((d for d in existing if d.kind == DocumentKind.gdoc), None)
+        body = proposal.generated_text or ""
+        scope = proposal.scope_summary or ""
+        lead_id = proposal.lead_id
+
+    if already_gdoc is not None:
+        log.info(
+            "handle_publish_proposal_to_gdoc.idempotency_hit",
+            proposal_id=proposal_id,
+            document_id=already_gdoc.id,
+        )
+        await _send_operator_link(container, proposal_id, already_gdoc.url or "(no url)")
+        return
+
+    title = f"Proposal #{proposal_id} (lead #{lead_id}) — {scope[:60]}"
+    ref = await container.gdocs.create_doc(title=title, body=body)
+
+    async with container.uow() as uow:
+        doc = await uow.documents.add(
+            Document(
+                owner_type=DocumentOwnerType.proposal,
+                owner_id=proposal_id,
+                kind=DocumentKind.gdoc,
+                title=ref.title,
+                url=ref.url,
+                gdoc_id=ref.doc_id,
+                mime_type="application/vnd.google-apps.document",
+                uploaded_by_user_id=None,
+            )
+        )
+        await record_event(
+            uow,
+            event_type="proposal.published_to_gdoc",
+            aggregate_type="proposal",
+            aggregate_id=proposal_id,
+            payload={
+                "document_id": doc.id,
+                "gdoc_id": ref.doc_id,
+                "url": ref.url,
+            },
+            actor_user_id=None,
+        )
+        await uow.commit()
+
+    await _send_operator_link(container, proposal_id, ref.url)
+    log.info(
+        "handle_publish_proposal_to_gdoc.done",
+        proposal_id=proposal_id,
+        gdoc_id=ref.doc_id,
+    )
+
+
+async def _send_operator_link(container: Container, proposal_id: int, url: str) -> None:
+    ids = container.settings.telegram_operator_ids
+    if not ids:
+        return
+    chat_id = ids[0]
+    try:
+        await container.telegram_sender.send_message(
+            chat_id=chat_id,
+            text=f"📄 Proposal #{proposal_id} опубликован: {url}",
+        )
+    except Exception as exc:
+        log.warning(
+            "handle_publish_proposal_to_gdoc.notify_failed",
+            proposal_id=proposal_id,
+            error=str(exc),
+        )

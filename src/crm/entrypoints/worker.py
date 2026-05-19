@@ -27,19 +27,13 @@ def _register_all_handlers() -> None:
     """Centralised handler registration.
 
     Add ``register_handler(job_type, fn)`` calls here as new job types
-    are introduced. Imports are deferred so a partial codebase still
-    boots (T7/T8 fill in the publish_proposal_to_gdoc handler).
+    are introduced.
     """
     from crm.scheduler.handlers import register_handler
-
-    try:
-        from crm.use_cases.publish_proposal_to_gdoc import (
-            JOB_TYPE_PUBLISH_PROPOSAL,
-            handle_publish_proposal_to_gdoc,
-        )
-    except ImportError:
-        log.info("worker.handlers.publish_proposal_to_gdoc.not_yet_available")
-        return
+    from crm.use_cases.publish_proposal_to_gdoc import (
+        JOB_TYPE_PUBLISH_PROPOSAL,
+        handle_publish_proposal_to_gdoc,
+    )
 
     register_handler(JOB_TYPE_PUBLISH_PROPOSAL, handle_publish_proposal_to_gdoc)
 
