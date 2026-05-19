@@ -34,8 +34,13 @@ def _register_all_handlers() -> None:
         JOB_TYPE_PUBLISH_PROPOSAL,
         handle_publish_proposal_to_gdoc,
     )
+    from crm.use_cases.send_follow_up import (
+        JOB_TYPE_SEND_FOLLOW_UP,
+        handle_send_follow_up,
+    )
 
     register_handler(JOB_TYPE_PUBLISH_PROPOSAL, handle_publish_proposal_to_gdoc)
+    register_handler(JOB_TYPE_SEND_FOLLOW_UP, handle_send_follow_up)
 
 
 async def run() -> None:

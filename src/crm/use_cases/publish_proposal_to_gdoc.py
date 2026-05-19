@@ -172,14 +172,29 @@ async def handle_publish_proposal_to_gdoc(container: Container, job: ScheduledJo
 
 
 async def _send_operator_link(container: Container, proposal_id: int, url: str) -> None:
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
     ids = container.settings.telegram_operator_ids
     if not ids:
         return
     chat_id = ids[0]
+    # Inline keyboard with the mark-sent button so the operator can advance
+    # the proposal to "sent" in one tap right from the notification.
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Отправлено клиенту",
+                    callback_data=f"mark_sent:{proposal_id}",
+                ),
+            ],
+        ],
+    )
     try:
         await container.telegram_sender.send_message(
             chat_id=chat_id,
             text=f"📄 Proposal #{proposal_id} опубликован: {url}",
+            reply_markup=kb,
         )
     except Exception as exc:
         log.warning(
