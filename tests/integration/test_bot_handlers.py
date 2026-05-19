@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,51 +15,13 @@ from aiogram.types import (
     Update,
     User,
 )
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from crm.config import Settings
 from crm.container import Container
-from crm.db.models.client import Client
 from crm.db.models.enums import ChannelKind, LeadStatus
-from crm.db.models.event import Event
 from crm.db.models.lead import Lead
 from crm.entrypoints.bot import register_handlers
-
-
-def _alembic_config(settings: Settings) -> Config:
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", settings.database_url)
-    return cfg
-
-
-async def _migrate(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_ENV", settings.app_env.value)
-    monkeypatch.setenv("DATABASE_URL", settings.database_url)
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", settings.telegram_bot_token)
-    monkeypatch.setenv(
-        "TELEGRAM_OPERATOR_IDS",
-        ",".join(str(i) for i in settings.telegram_operator_ids),
-    )
-    monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
-    cfg = _alembic_config(settings)
-    await asyncio.to_thread(command.upgrade, cfg, "head")
-
-
-async def _cleanup_lead(container: Container, lead_id: int) -> None:
-    async with container.uow() as uow:
-        await uow.session.execute(
-            delete(Event).where(Event.aggregate_type == "lead", Event.aggregate_id == lead_id)
-        )
-        lead = await uow.leads.get(lead_id)
-        if lead is not None:
-            client_id = lead.client_id
-            await uow.session.execute(delete(Lead).where(Lead.id == lead_id))
-            if client_id is not None:
-                await uow.session.execute(delete(Client).where(Client.id == client_id))
-        await uow.commit()
 
 
 def _make_text_update(text: str, *, user_id: int, msg_id: int = 1001, chat_id: int = 100) -> Update:
@@ -122,9 +83,8 @@ def _make_bot_stub() -> AsyncMock:
 async def test_bot_text_message_runs_intake_and_shows_keyboard(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container, sent = _container_with_capturing_sender(settings)
 
     dp = Dispatcher()
@@ -139,11 +99,6 @@ async def test_bot_text_message_runs_intake_and_shows_keyboard(
     assert "Lead #" in payload["text"]
     assert isinstance(payload["reply_markup"], InlineKeyboardMarkup)
 
-    # Cleanup: find the lead the use case just created and delete it.
-    async with container.uow() as uow:
-        leads = await uow.leads.list_by_status(LeadStatus.qualifying)
-    for lead in leads:
-        await _cleanup_lead(container, lead.id)
     await container.aclose()
 
 
@@ -151,9 +106,8 @@ async def test_bot_text_message_runs_intake_and_shows_keyboard(
 async def test_bot_text_from_non_operator_is_ignored(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container, sent = _container_with_capturing_sender(settings)
 
     dp = Dispatcher()
@@ -170,9 +124,8 @@ async def test_bot_text_from_non_operator_is_ignored(
 async def test_bot_confirm_callback_qualifies_lead(
     settings: Settings,
     engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
+    db_clean: None,
 ) -> None:
-    await _migrate(settings, monkeypatch)
     container, sent = _container_with_capturing_sender(settings)
 
     async with container.uow() as uow:
@@ -204,5 +157,4 @@ async def test_bot_confirm_callback_qualifies_lead(
     assert loaded.status == LeadStatus.qualified
     assert loaded.client_id is not None
 
-    await _cleanup_lead(container, lead_id)
     await container.aclose()

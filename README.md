@@ -11,10 +11,10 @@ CRM/workflow platform for an architecture bureau. Postgres-centered; Telegram is
 - [x] Plan 2: Domain + Schema
 - [x] Plan 3: Lead Intake (fake AI)
 - [x] Plan 4: AI Adapters (OpenAI)
-- [ ] Plan 5: Proposal + Scheduler + Worker
-- [ ] Plan 6: Google Docs adapter
-- [ ] Plan 7: Follow-ups
-- [ ] Plan 8: Production hardening
+- [x] Plan 5a: Proposal Generation + Worker + GDocs Publishing (fake GDocs)
+- [ ] Plan 5b: mark_proposal_sent + FollowUp + send_follow_up
+- [ ] Plan 6: Real Google Docs adapter
+- [ ] Plan 7: Production hardening
 
 ## Architecture in 30 seconds
 
@@ -31,12 +31,18 @@ domain tables (Plan 2):
   follow_ups  contracts  documents
   events  scheduled_jobs
 
-use cases (Plan 3):
+use cases (Plan 3 + 5a):
   intake_lead   qualify_lead
+  generate_proposal   publish_proposal_to_gdoc
 
 AI adapters (Plan 4):
   OpenAIExtractor (gpt-5.5-medium)   OpenAIProposalWriter
   prompts in src/crm/prompts/*.j2
+
+worker (Plan 5a):
+  scheduled_jobs queue (Postgres, FOR UPDATE SKIP LOCKED, exp backoff)
+  handler registry — register job_type → callable
+  current handlers: publish_proposal_to_gdoc → FakeGDocsClient
 ```
 
 All three Python processes share the `crm` package. Business logic lives in `src/crm/use_cases/` — one async function per case, with an explicit UoW + adapters argument (no globals). Bot handlers in `src/crm/entrypoints/bot.py` translate Telegram updates into use-case calls; they never touch the DB directly. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev; real OpenAI adapters are selected via `AI_PROVIDER=openai`. Repositories live in `src/crm/db/repositories/`; access via `uow.leads`, `uow.proposals`, etc.
@@ -110,9 +116,12 @@ src/crm/
     unit_of_work.py     # SqlAlchemyUnitOfWork + uow_scope
     models/             # ORM models (one file per entity)
     repositories/       # async repos hung off UoW
-  use_cases/            # business logic: intake_lead, qualify_lead, ...
+  use_cases/            # business logic: intake_lead, qualify_lead,
+                        # generate_proposal, publish_proposal_to_gdoc
   adapters/             # IO behind Protocols; fakes + OpenAI impls
   prompts/              # Jinja .j2 prompts (extract_lead, generate_proposal)
+  scheduler/            # Postgres job queue: enqueue_job, backoff,
+                        # handler registry, worker runner
   entrypoints/          # api / bot / worker
 tests/
   unit/                 # no IO

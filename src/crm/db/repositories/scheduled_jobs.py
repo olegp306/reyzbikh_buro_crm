@@ -49,3 +49,72 @@ class ScheduledJobRepository(AsyncRepository[ScheduledJob]):
                 attempts=ScheduledJob.attempts + 1,
             )
         )
+
+    async def mark_done(self, job_id: int, *, now: datetime) -> None:
+        await self._session.execute(
+            update(ScheduledJob)
+            .where(ScheduledJob.id == job_id)
+            .values(
+                status=JobStatus.done,
+                locked_at=None,
+                locked_by=None,
+                last_error=None,
+                updated_at=now,
+            )
+        )
+
+    async def reschedule(
+        self,
+        job_id: int,
+        *,
+        run_at: datetime,
+        last_error: str,
+        now: datetime,
+    ) -> None:
+        """Mark a failed attempt and reschedule (status=pending, run_at later)."""
+        await self._session.execute(
+            update(ScheduledJob)
+            .where(ScheduledJob.id == job_id)
+            .values(
+                status=JobStatus.pending,
+                run_at=run_at,
+                last_error=last_error[:2000],
+                locked_at=None,
+                locked_by=None,
+                updated_at=now,
+            )
+        )
+
+    async def mark_failed_terminal(self, job_id: int, *, last_error: str, now: datetime) -> None:
+        """Job exhausted ``max_attempts`` — terminal failure."""
+        await self._session.execute(
+            update(ScheduledJob)
+            .where(ScheduledJob.id == job_id)
+            .values(
+                status=JobStatus.failed,
+                last_error=last_error[:2000],
+                locked_at=None,
+                locked_by=None,
+                updated_at=now,
+            )
+        )
+
+    async def reclaim_stuck(self, *, older_than: datetime, now: datetime) -> int:
+        """Return jobs locked-running before ``older_than`` to ``pending``.
+
+        Returns the number of rows affected.
+        """
+        result = await self._session.execute(
+            update(ScheduledJob)
+            .where(
+                ScheduledJob.status == JobStatus.running,
+                ScheduledJob.locked_at < older_than,
+            )
+            .values(
+                status=JobStatus.pending,
+                locked_at=None,
+                locked_by=None,
+                updated_at=now,
+            )
+        )
+        return result.rowcount or 0
