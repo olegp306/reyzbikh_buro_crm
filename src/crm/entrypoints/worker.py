@@ -49,7 +49,7 @@ async def run() -> None:
                     stop.wait(),
                     timeout=settings.worker_poll_interval_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
     finally:
         await container.aclose()

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from aiogram import Bot, Dispatcher
@@ -14,7 +14,7 @@ def _make_message(text: str, user_id: int) -> Update:
     chat = Chat(id=user_id, type="private")
     message = Message(
         message_id=1,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=chat,
         from_user=user,
         text=text,

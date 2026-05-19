@@ -34,7 +34,7 @@ def pg_url(pg_container: PostgresContainer) -> str:
         "postgresql://",
     ):
         if raw.startswith(old):
-            return "postgresql+asyncpg://" + raw[len(old):]
+            return "postgresql+asyncpg://" + raw[len(old) :]
     return raw  # already on +asyncpg
 
 

@@ -6,8 +6,8 @@ In Plan 1 the only route is `/healthz`. Future plans add domain endpoints
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI

@@ -1,5 +1,3 @@
-import pytest
-
 from crm.adapters.ai.extractor import ExtractedLead, FakeAIExtractor
 from crm.adapters.ai.proposal_writer import FakeProposalWriter, ProposalDraft
 from crm.adapters.gdocs.client import FakeGDocsClient
