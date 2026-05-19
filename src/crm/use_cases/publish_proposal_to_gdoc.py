@@ -115,13 +115,23 @@ async def handle_publish_proposal_to_gdoc(container: Container, job: ScheduledJo
         lead_id = proposal.lead_id
 
     if already_gdoc is not None:
+        # First invocation already created the Document + notified the operator.
+        # Lease-reclaim retries should be silent so the operator doesn't get
+        # the same "опубликован" link twice.
         log.info(
             "handle_publish_proposal_to_gdoc.idempotency_hit",
             proposal_id=proposal_id,
             document_id=already_gdoc.id,
         )
-        await _send_operator_link(container, proposal_id, already_gdoc.url or "(no url)")
         return
+
+    if not body.strip():
+        # Re-validate body at the worker side: the enqueue use case checks
+        # too, but the proposal could have been wiped between enqueue and
+        # worker tick. Refuse to create an empty GDoc.
+        raise RuntimeError(
+            f"Proposal {proposal_id} has empty generated_text — cannot publish to GDoc"
+        )
 
     title = f"Proposal #{proposal_id} (lead #{lead_id}) — {scope[:60]}"
     ref = await container.gdocs.create_doc(title=title, body=body)

@@ -81,8 +81,12 @@ async def _pick_due_jobs(container: Container, *, worker_id: str, limit: int) ->
         for job in jobs:
             prior_attempts = job.attempts
             await uow.scheduled_jobs.mark_running(job.id, worker_id=worker_id, now=now)
-            # Mirror DB increment without marking the instance dirty (avoids
-            # flushing a duplicate attempts+1 on commit after mark_running).
+            # Sync the in-memory ORM instance with the server-side attempts+1
+            # (mark_running is a Core UPDATE so the loaded `job` would still
+            # report the OLD value). Downstream `_run_one` compares
+            # `job.attempts >= job.max_attempts` and needs the new value.
+            # Using set_committed_value (not direct assignment) avoids marking
+            # the instance dirty.
             set_committed_value(job, "attempts", prior_attempts + 1)
         await uow.commit()
     return jobs
@@ -91,9 +95,7 @@ async def _pick_due_jobs(container: Container, *, worker_id: str, limit: int) ->
 async def _run_one(container: Container, job: ScheduledJob) -> None:
     handler = get_handler(job.job_type)
     if handler is None:
-        await _finalize_terminal(
-            container, job, error=f"no handler registered for {job.job_type!r}"
-        )
+        await _finalize_unknown_handler(container, job)
         return
 
     try:
@@ -149,27 +151,42 @@ async def _finalize_terminal(container: Container, job: ScheduledJob, *, error: 
         job_type=job.job_type,
         error=error,
     )
-    await _notify_operator_about_failure(container, job, error)
+    alert = (
+        f"⚠ Job {job.id} ({job.job_type}) сдох окончательно "
+        f"после {job.attempts} попыток.\nОшибка: {error[:500]}"  # noqa: RUF001
+    )
+    await _send_operator_alert(container, job, alert)
 
 
-async def _notify_operator_about_failure(
-    container: Container, job: ScheduledJob, error: str
-) -> None:
+async def _finalize_unknown_handler(container: Container, job: ScheduledJob) -> None:
+    """No handler registered for this job_type — terminate without retries.
+
+    Distinct path so the operator alert doesn't mention 'N attempts' (there
+    weren't any — the job never reached a handler).
+    """
+    error = f"no handler registered for {job.job_type!r}"
+    now = datetime.now(UTC)
+    async with container.uow() as uow:
+        await uow.scheduled_jobs.mark_failed_terminal(job.id, last_error=error, now=now)
+        await uow.commit()
+    log.error(
+        "worker.handler.unknown_type",
+        job_id=job.id,
+        job_type=job.job_type,
+    )
+    alert = (
+        f"⚠ Job {job.id} ({job.job_type}): обработчик не зарегистрирован. "
+        f"Воркер не знает, как её исполнить — проверь worker.entrypoint."
+    )
+    await _send_operator_alert(container, job, alert)
+
+
+async def _send_operator_alert(container: Container, job: ScheduledJob, text: str) -> None:
     ids = container.settings.telegram_operator_ids
     if not ids:
         return
     chat_id = ids[0]
     try:
-        await container.telegram_sender.send_message(
-            chat_id=chat_id,
-            text=(
-                f"⚠ Job {job.id} ({job.job_type}) сдох окончательно "
-                f"после {job.attempts} попыток.\nОшибка: {error[:500]}"  # noqa: RUF001
-            ),
-        )
+        await container.telegram_sender.send_message(chat_id=chat_id, text=text)
     except Exception as exc:
-        log.warning(
-            "worker.alert.failed",
-            job_id=job.id,
-            error=str(exc),
-        )
+        log.warning("worker.alert.failed", job_id=job.id, error=str(exc))
