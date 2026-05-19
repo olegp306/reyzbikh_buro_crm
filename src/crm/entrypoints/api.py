@@ -33,6 +33,7 @@ def build_app(container: Container) -> FastAPI:
         try:
             yield
         finally:
+            await container.aclose()
             log.info("api.shutting_down")
 
     app = FastAPI(title="reyzbikh-buro-crm", version="0.1.0", lifespan=lifespan)
