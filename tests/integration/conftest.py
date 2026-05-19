@@ -40,6 +40,8 @@ def pg_url(pg_container: PostgresContainer) -> str:
 
 @pytest.fixture
 def settings(pg_url: str) -> Settings:
+    # Telegram token must match aiogram's regex `\d+:[A-Za-z0-9_-]{35,}`
+    # because T10's bot tests pass this value into `Bot(token=...)`.
     return Settings(  # type: ignore[call-arg]
         app_env=AppEnv.test,
         log_level="DEBUG",
