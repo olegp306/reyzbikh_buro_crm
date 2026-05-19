@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from crm.adapters.ai.extractor import AIExtractor, FakeAIExtractor
+from crm.adapters.ai.openai_extractor import OpenAIExtractor
 from crm.adapters.ai.proposal_writer import FakeProposalWriter, ProposalWriter
 from crm.adapters.gdocs.client import FakeGDocsClient, GDocsClient
 from crm.adapters.telegram.sender import FakeTelegramSender, TelegramSender
@@ -47,16 +48,33 @@ class Container:
 
 
 def _build_ai_extractor(settings: Settings) -> AIExtractor:
-    if settings.ai_provider == "fake":
+    provider = settings.ai_provider.lower()
+    if provider == "openai":
+        from openai import AsyncOpenAI
+
+        if not settings.openai_api_key:
+            raise RuntimeError("AI_PROVIDER=openai but OPENAI_API_KEY is not set")
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return OpenAIExtractor(client=client, model=settings.openai_model)
+    if provider == "fake":
         return FakeAIExtractor()
-    # Real providers (openai/anthropic) arrive in Plan 4.
-    return FakeAIExtractor()
+    raise RuntimeError(f"Unsupported AI_PROVIDER: {settings.ai_provider!r}")
 
 
 def _build_proposal_writer(settings: Settings) -> ProposalWriter:
-    if settings.ai_provider == "fake":
+    provider = settings.ai_provider.lower()
+    if provider == "openai":
+        from openai import AsyncOpenAI
+
+        from crm.adapters.ai.openai_proposal_writer import OpenAIProposalWriter
+
+        if not settings.openai_api_key:
+            raise RuntimeError("AI_PROVIDER=openai but OPENAI_API_KEY is not set")
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return OpenAIProposalWriter(client=client, model=settings.openai_model)
+    if provider == "fake":
         return FakeProposalWriter()
-    return FakeProposalWriter()
+    raise RuntimeError(f"Unsupported AI_PROVIDER: {settings.ai_provider!r}")
 
 
 def _build_gdocs(_settings: Settings) -> GDocsClient:
