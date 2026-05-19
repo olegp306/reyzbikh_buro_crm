@@ -12,7 +12,7 @@ CRM/workflow platform for an architecture bureau. Postgres-centered; Telegram is
 - [x] Plan 3: Lead Intake (fake AI)
 - [x] Plan 4: AI Adapters (OpenAI)
 - [x] Plan 5a: Proposal Generation + Worker + GDocs Publishing (fake GDocs)
-- [ ] Plan 5b: mark_proposal_sent + FollowUp + send_follow_up
+- [x] Plan 5b: Mark Sent + Follow-up Lifecycle (operator reminders + outcome)
 - [ ] Plan 6: Real Google Docs adapter
 - [ ] Plan 7: Production hardening
 
@@ -31,18 +31,24 @@ domain tables (Plan 2):
   follow_ups  contracts  documents
   events  scheduled_jobs
 
-use cases (Plan 3 + 5a):
+use cases (Plan 3 + 5a + 5b):
   intake_lead   qualify_lead
   generate_proposal   publish_proposal_to_gdoc
+  mark_proposal_sent   send_follow_up   record_follow_up_result
 
 AI adapters (Plan 4):
   OpenAIExtractor (gpt-5.5-medium)   OpenAIProposalWriter
   prompts in src/crm/prompts/*.j2
 
-worker (Plan 5a):
+worker (Plan 5a + 5b):
   scheduled_jobs queue (Postgres, FOR UPDATE SKIP LOCKED, exp backoff)
   handler registry — register job_type → callable
-  current handlers: publish_proposal_to_gdoc → FakeGDocsClient
+  current handlers: publish_proposal_to_gdoc, send_follow_up
+
+bot flow (Plan 3 + 5a + 5b):
+  /start → intake (text) → qualify → propose → publish → mark sent
+                                                      ↓ (+3 days)
+                                          worker reminder → outcome (accept / decline / wait)
 ```
 
 All three Python processes share the `crm` package. Business logic lives in `src/crm/use_cases/` — one async function per case, with an explicit UoW + adapters argument (no globals). Bot handlers in `src/crm/entrypoints/bot.py` translate Telegram updates into use-case calls; they never touch the DB directly. Adapters (AI, GDocs, Telegram outbound) sit behind `Protocol` interfaces with `Fake*` impls for tests and early dev; real OpenAI adapters are selected via `AI_PROVIDER=openai`. Repositories live in `src/crm/db/repositories/`; access via `uow.leads`, `uow.proposals`, etc.
@@ -117,7 +123,8 @@ src/crm/
     models/             # ORM models (one file per entity)
     repositories/       # async repos hung off UoW
   use_cases/            # business logic: intake_lead, qualify_lead,
-                        # generate_proposal, publish_proposal_to_gdoc
+                        # generate_proposal, publish_proposal_to_gdoc,
+                        # mark_proposal_sent, send_follow_up, record_follow_up_result
   adapters/             # IO behind Protocols; fakes + OpenAI impls
   prompts/              # Jinja .j2 prompts (extract_lead, generate_proposal)
   scheduler/            # Postgres job queue: enqueue_job, backoff,
