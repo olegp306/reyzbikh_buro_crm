@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     database_url: str = Field(...)
 
     telegram_bot_token: str = Field(...)
+    # NoDecode prevents pydantic-settings >=2.7 from JSON-decoding the env
+    # value before our @field_validator runs; without it,
+    # `TELEGRAM_OPERATOR_IDS=111,222` would fail JSON parsing.
     telegram_operator_ids: Annotated[tuple[int, ...], NoDecode] = Field(...)
 
     ai_provider: Literal["openai", "anthropic", "fake"] = Field(default="fake")
