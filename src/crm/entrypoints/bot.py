@@ -34,6 +34,7 @@ log = structlog.get_logger(__name__)
 CONFIRM_PREFIX = "confirm_lead:"
 EDIT_PREFIX = "edit_lead:"
 PROPOSE_PREFIX = "propose_lead:"
+PUBLISH_PROPOSAL_PREFIX = "publish_proposal:"
 
 
 def _is_operator(container: Container, user_id: int | None) -> bool:
@@ -219,6 +220,50 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
                 reply_markup=kb,
             )
         await cb.answer()
+
+    @router.callback_query(F.data.startswith(PUBLISH_PROPOSAL_PREFIX))
+    async def on_publish_proposal(cb: CallbackQuery) -> None:
+        user_id = cb.from_user.id if cb.from_user else None
+        if not _is_operator(container, user_id):
+            await cb.answer("Нет доступа.")
+            return
+        try:
+            proposal_id = int((cb.data or "").removeprefix(PUBLISH_PROPOSAL_PREFIX))
+        except ValueError:
+            await cb.answer("Битый callback.")
+            return
+
+        from crm.use_cases.publish_proposal_to_gdoc import (
+            ProposalNotFoundError,
+            ProposalNotReadyError,
+            publish_proposal_to_gdoc,
+        )
+
+        try:
+            job = await publish_proposal_to_gdoc(
+                container, proposal_id=proposal_id, operator_user_id=None
+            )
+        except ProposalNotFoundError:
+            await cb.answer(f"Proposal {proposal_id} не найден.")
+            return
+        except ProposalNotReadyError as exc:
+            await cb.answer(str(exc), show_alert=True)
+            return
+
+        if cb.message is not None:
+            await container.telegram_sender.send_message(
+                chat_id=cb.message.chat.id,
+                text=(
+                    f"⏳ Запросил публикацию Proposal #{proposal_id} в GDoc "
+                    f"(job #{job.id}). Воркер скоро отработает."
+                ),
+            )
+        await cb.answer()
+        log.info(
+            "bot.publish_proposal.enqueued",
+            proposal_id=proposal_id,
+            job_id=job.id,
+        )
 
     dp.include_router(router)
 
