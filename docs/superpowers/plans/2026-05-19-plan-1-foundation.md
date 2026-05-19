@@ -1025,9 +1025,11 @@ Make sure `upgrade()` and `downgrade()` are empty `pass` bodies (the docstring c
 Create `tests/integration/test_alembic_upgrade.py`:
 
 ```python
+import asyncio
+
 import pytest
-from alembic.config import Config
 from alembic import command
+from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -1056,7 +1058,12 @@ async def test_alembic_upgrade_head_runs_clean(
     )
     monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
 
-    command.upgrade(_alembic_config(settings), "head")
+    # env.py calls asyncio.run() at module top-level — running it inside
+    # an already-active event loop raises RuntimeError. asyncio.to_thread
+    # executes the blocking Alembic command in a worker thread where no
+    # event loop is active.
+    cfg = _alembic_config(settings)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
 
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT version_num FROM alembic_version"))
