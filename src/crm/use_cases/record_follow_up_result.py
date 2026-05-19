@@ -92,6 +92,36 @@ async def record_follow_up_result(
         if lead is None:
             raise RuntimeError(f"Proposal {proposal.id} references missing Lead {proposal.lead_id}")
 
+        already_final = (
+            outcome == FollowUpOutcome.accepted and proposal.status == ProposalStatus.accepted
+        ) or (outcome == FollowUpOutcome.declined and proposal.status == ProposalStatus.declined)
+        if already_final:
+            # Re-click of the same outcome — don't re-fire proposal.accepted/
+            # declined or overwrite responded_at. Notes were already updated
+            # above; we still emit a `follow_up.result_recorded` event so the
+            # audit trail captures the re-click.
+            log.info(
+                "record_follow_up_result.idempotency_hit",
+                follow_up_id=follow_up_id,
+                outcome=outcome.value,
+                proposal_status=proposal.status.value,
+            )
+            await record_event(
+                uow,
+                event_type="follow_up.result_recorded",
+                aggregate_type="follow_up",
+                aggregate_id=follow_up_id,
+                payload={
+                    "outcome": outcome.value,
+                    "notes_preview": (notes or "")[:200],
+                    "proposal_id": proposal.id,
+                    "idempotency_hit": True,
+                },
+                actor_user_id=operator_user_id,
+            )
+            await uow.commit()
+            return follow_up
+
         if outcome == FollowUpOutcome.accepted:
             proposal.status = ProposalStatus.accepted
             proposal.responded_at = now

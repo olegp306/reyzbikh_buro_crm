@@ -28,6 +28,7 @@ from crm.use_cases.qualify_lead import (
     LeadNotFoundError,
     qualify_lead,
 )
+from crm.use_cases.send_follow_up import FOLLOW_UP_OUTCOME_PREFIX
 
 log = structlog.get_logger(__name__)
 
@@ -36,7 +37,8 @@ EDIT_PREFIX = "edit_lead:"
 PROPOSE_PREFIX = "propose_lead:"
 PUBLISH_PROPOSAL_PREFIX = "publish_proposal:"
 MARK_SENT_PREFIX = "mark_sent:"
-FOLLOW_UP_OUTCOME_PREFIX = "follow_up_outcome:"
+# FOLLOW_UP_OUTCOME_PREFIX re-exported from crm.use_cases.send_follow_up
+# so the bot router and the worker keyboard builder can't drift apart.
 
 
 def _is_operator(container: Container, user_id: int | None) -> bool:
@@ -295,6 +297,14 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
         except ProposalNotInDraftError as exc:
             await cb.answer(str(exc), show_alert=True)
             return
+        except RuntimeError as exc:
+            log.exception(
+                "bot.mark_sent.runtime_error",
+                proposal_id=proposal_id,
+                error=str(exc),
+            )
+            await cb.answer("Внутренняя ошибка, проверь логи.", show_alert=True)
+            return
 
         if cb.message is not None:
             await container.telegram_sender.send_message(
@@ -352,6 +362,14 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
             return
         except FollowUpNotSentError as exc:
             await cb.answer(str(exc), show_alert=True)
+            return
+        except RuntimeError as exc:
+            log.exception(
+                "bot.follow_up_outcome.runtime_error",
+                follow_up_id=follow_up_id,
+                error=str(exc),
+            )
+            await cb.answer("Внутренняя ошибка, проверь логи.", show_alert=True)
             return
 
         outcome_label = {

@@ -29,9 +29,10 @@ log = structlog.get_logger(__name__)
 
 JOB_TYPE_SEND_FOLLOW_UP = "send_follow_up"
 
-# Outcome callback prefix — mirrored in entrypoints/bot.py. Kept here so
-# the keyboard builder lives next to the message that uses it.
-_OUTCOME_PREFIX = "follow_up_outcome:"
+# Outcome callback prefix — exported so the bot's callback router can
+# pattern-match the same string without drifting. The keyboard builder
+# below uses it directly.
+FOLLOW_UP_OUTCOME_PREFIX = "follow_up_outcome:"
 
 
 class FollowUpNotFoundError(LookupError):
@@ -50,15 +51,15 @@ def _outcome_keyboard(follow_up_id: int):
             [
                 InlineKeyboardButton(
                     text="✅ Принял",
-                    callback_data=f"{_OUTCOME_PREFIX}{follow_up_id}:accepted",
+                    callback_data=f"{FOLLOW_UP_OUTCOME_PREFIX}{follow_up_id}:accepted",
                 ),
                 InlineKeyboardButton(
                     text="❌ Отказался",
-                    callback_data=f"{_OUTCOME_PREFIX}{follow_up_id}:declined",
+                    callback_data=f"{FOLLOW_UP_OUTCOME_PREFIX}{follow_up_id}:declined",
                 ),
                 InlineKeyboardButton(
                     text="💬 Жду",
-                    callback_data=f"{_OUTCOME_PREFIX}{follow_up_id}:waiting",
+                    callback_data=f"{FOLLOW_UP_OUTCOME_PREFIX}{follow_up_id}:waiting",
                 ),
             ],
         ],

@@ -182,6 +182,56 @@ async def test_record_follow_up_result_missing_raises(
 
 
 @pytest.mark.integration
+async def test_record_outcome_accepted_twice_is_idempotent(
+    settings: Settings,
+    engine: AsyncEngine,
+    db_clean: None,
+) -> None:
+    """Re-clicking the same outcome must not duplicate proposal.accepted events."""
+    container = Container(settings)
+    _, proposal_id, follow_up_id = await _seed_sent_follow_up(container)
+
+    await record_follow_up_result(
+        container,
+        follow_up_id=follow_up_id,
+        outcome=FollowUpOutcome.accepted,
+        notes="yes-1",
+        operator_user_id=None,
+    )
+
+    async with container.uow() as uow:
+        proposal = await uow.proposals.get(proposal_id)
+        assert proposal is not None
+        first_responded_at = proposal.responded_at
+
+    await record_follow_up_result(
+        container,
+        follow_up_id=follow_up_id,
+        outcome=FollowUpOutcome.accepted,
+        notes="yes-2 (re-click)",
+        operator_user_id=None,
+    )
+
+    async with container.uow() as uow:
+        proposal = await uow.proposals.get(proposal_id)
+        follow_up = await uow.follow_ups.get(follow_up_id)
+        events = await uow.events.list_for_aggregate("proposal", proposal_id)
+
+    assert proposal is not None
+    assert proposal.status == ProposalStatus.accepted
+    # responded_at not overwritten on the re-click.
+    assert proposal.responded_at == first_responded_at
+    # Notes still update (latest wins).
+    assert follow_up is not None
+    assert follow_up.result_notes == "yes-2 (re-click)"
+    # Only ONE proposal.accepted event was emitted.
+    accepted_events = [e for e in events if e.event_type == "proposal.accepted"]
+    assert len(accepted_events) == 1
+
+    await container.aclose()
+
+
+@pytest.mark.integration
 async def test_record_follow_up_result_rejects_pending(
     settings: Settings,
     engine: AsyncEngine,
