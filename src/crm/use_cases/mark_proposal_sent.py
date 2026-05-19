@@ -33,14 +33,13 @@ from crm.db.models.enums import (
 from crm.db.models.follow_up import FollowUp
 from crm.scheduler.jobs import enqueue_job
 from crm.use_cases.events import record_event
+from crm.use_cases.send_follow_up import JOB_TYPE_SEND_FOLLOW_UP
 
 if TYPE_CHECKING:
     from crm.container import Container
     from crm.db.models.proposal import Proposal
 
 log = structlog.get_logger(__name__)
-
-JOB_TYPE_SEND_FOLLOW_UP = "send_follow_up"
 
 # Default reminder lag — matches spec §5.5 ("FollowUp +3d").
 FOLLOW_UP_DELAY = timedelta(days=3)
