@@ -1,0 +1,130 @@
+"""Integration tests for repositories.
+
+Each test creates a Container, runs Alembic upgrade head against a fresh
+testcontainer Postgres, then exercises one repository at a time inside a UoW.
+"""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from crm.config import Settings
+from crm.container import Container
+from crm.db.models.client import Client
+from crm.db.models.enums import ClientSource, LeadStatus, UserRole
+from crm.db.models.lead import Lead
+from crm.db.models.user import User
+
+
+def _alembic_config(settings: Settings) -> Config:
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    return cfg
+
+
+async def _migrate(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", settings.app_env.value)
+    monkeypatch.setenv("DATABASE_URL", settings.database_url)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", settings.telegram_bot_token)
+    monkeypatch.setenv(
+        "TELEGRAM_OPERATOR_IDS",
+        ",".join(str(i) for i in settings.telegram_operator_ids),
+    )
+    monkeypatch.setenv("AI_PROVIDER", settings.ai_provider)
+    cfg = _alembic_config(settings)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+
+
+@pytest.mark.integration
+async def test_user_repository_crud_round_trip(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        u = await uow.users.add(
+            User(telegram_id=12345, display_name="Operator One", role=UserRole.owner)
+        )
+        await uow.commit()
+        user_id = u.id
+
+    async with container.uow() as uow:
+        loaded = await uow.users.get(user_id)
+        assert loaded is not None
+        assert loaded.display_name == "Operator One"
+        by_tg = await uow.users.get_by_telegram_id(12345)
+        assert by_tg is not None and by_tg.id == user_id
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_client_repository_crud_round_trip(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        c = await uow.clients.add(
+            Client(
+                full_name="Иван Иванов",
+                phone="+7900xxx0001",
+                source=ClientSource.telegram,
+                telegram_id=98765,
+            )
+        )
+        await uow.commit()
+        client_id = c.id
+
+    async with container.uow() as uow:
+        loaded = await uow.clients.get(client_id)
+        assert loaded is not None
+        assert loaded.full_name == "Иван Иванов"
+        assert loaded.source == ClientSource.telegram
+        by_tg = await uow.clients.get_by_telegram_id(98765)
+        assert by_tg is not None and by_tg.id == client_id
+
+    await container.aclose()
+
+
+@pytest.mark.integration
+async def test_lead_repository_list_by_status(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from crm.db.models.enums import ChannelKind
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    async with container.uow() as uow:
+        for i, status in enumerate([LeadStatus.new, LeadStatus.new, LeadStatus.qualified]):
+            await uow.leads.add(
+                Lead(
+                    channel=ChannelKind.telegram,
+                    raw_text=f"raw {i}",
+                    status=status,
+                )
+            )
+        await uow.commit()
+
+    async with container.uow() as uow:
+        new_leads = await uow.leads.list_by_status(LeadStatus.new)
+        qualified_leads = await uow.leads.list_by_status(LeadStatus.qualified)
+
+    assert len(new_leads) == 2
+    assert len(qualified_leads) == 1
+
+    await container.aclose()
