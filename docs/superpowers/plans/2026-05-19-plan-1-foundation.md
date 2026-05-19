@@ -451,6 +451,7 @@ LOG_LEVEL=INFO
 DATABASE_URL=postgresql+asyncpg://crm:crm@postgres:5432/crm
 
 # === Telegram ===
+# Format: <bot_id>:<35+ char secret>, e.g. 123456:ABC-DEF...
 TELEGRAM_BOT_TOKEN=
 # Comma-separated allowlist of Telegram user IDs. Empty = nobody is allowed.
 TELEGRAM_OPERATOR_IDS=
@@ -787,11 +788,13 @@ def pg_url(pg_container: PostgresContainer) -> str:
 
 @pytest.fixture
 def settings(pg_url: str) -> Settings:
+    # Telegram token must match aiogram's regex `\d+:[A-Za-z0-9_-]{35,}`
+    # because T10's bot tests pass this value into `Bot(token=...)`.
     return Settings(  # type: ignore[call-arg]
         app_env=AppEnv.test,
         log_level="DEBUG",
         database_url=pg_url,
-        telegram_bot_token="test-token",
+        telegram_bot_token="123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         telegram_operator_ids=(111,),
         ai_provider="fake",
     )
@@ -2346,7 +2349,7 @@ jobs:
     env:
       APP_ENV: test
       DATABASE_URL: postgresql+asyncpg://crm:crm@localhost:5432/crm
-      TELEGRAM_BOT_TOKEN: test-token
+      TELEGRAM_BOT_TOKEN: "123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
       TELEGRAM_OPERATOR_IDS: "111"
       AI_PROVIDER: fake
     steps:
