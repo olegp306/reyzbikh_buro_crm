@@ -139,3 +139,41 @@ async def test_intake_lead_records_actor_user_id_on_events(
     assert lead.assigned_to_user_id == operator_id
 
     await container.aclose()
+
+
+@pytest.mark.integration
+async def test_intake_lead_works_with_fake_provider_via_container_factory(
+    settings: Settings,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-trip: Container(settings) where ai_provider=fake builds a usable extractor."""
+    from crm.adapters.ai.extractor import FakeAIExtractor
+
+    await _migrate(settings, monkeypatch)
+    container = Container(settings)
+
+    assert isinstance(container.ai_extractor, FakeAIExtractor)
+
+    lead = await intake_lead(
+        container,
+        raw_text="smoke",
+        channel=ChannelKind.telegram,
+        channel_message_id="tg:smoke",
+        operator_user_id=None,
+    )
+    assert lead.status == LeadStatus.qualifying
+
+    from sqlalchemy import delete
+
+    from crm.db.models.event import Event
+    from crm.db.models.lead import Lead as LeadModel
+
+    async with container.uow() as uow:
+        await uow.session.execute(
+            delete(Event).where(Event.aggregate_type == "lead", Event.aggregate_id == lead.id)
+        )
+        await uow.session.execute(delete(LeadModel).where(LeadModel.id == lead.id))
+        await uow.commit()
+
+    await container.aclose()
